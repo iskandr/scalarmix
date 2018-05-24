@@ -45,6 +45,12 @@ class BivariateGaussian(Serializable):
         sigma[:, 0] = ((X - mu[:, 0][:, np.newaxis]) ** 2 * assignments).mean()
         sigma[:, 1] = ((X - mu[:, 1][:, np.newaxis]) ** 2 * (1.0 - assignments)).mean()
         weights = assignments.mean(axis=1)
+        assert (weights >= 0).all(), "Found %d/%d weights<0" % (
+            (weights < 0).sum(),
+            len(weights))
+        assert (weights <= 1).all(), "Found %d/%d weights>1" % (
+            (weights > 1).sum(),
+            len(weights))
         assert (sigma > 0).all(), "Found %d/%d sigma values<=0" % (
             (sigma <= 0).sum(),
             sigma.shape[0] * sigma.shape[1])
@@ -82,14 +88,14 @@ class BivariateGaussian(Serializable):
         mu, sigma, weights = self._m_step(
             X,
             random_assignment)
-        best_likelihoods = 10 ** 6 * np.ones(n_rows, dtype="float64")
+        best_likelihoods = 10 ** 20 * np.ones(n_rows, dtype="float64")
         for iter_number in range(self.max_iters):
             assignments = self._e_step(X, mu, sigma, weights)
             prev_mu, prev_sigma, prev_weights = mu, sigma, weights
             mu, sigma, weights = self._m_step(X, assignments)
             per_sample_likelihood = self.likelihood(X, mu, sigma, weights)
             sum_log_likelihoods = (-np.log(per_sample_likelihood)).sum(axis=1)
-            improved = (best_likelihoods - sum_log_likelihoods) > 0.00001
+            improved = (best_likelihoods - sum_log_likelihoods) > 0.000001
             best_likelihoods[improved] = sum_log_likelihoods[improved]
             mu[~improved] = prev_mu[~improved]
             sigma[~improved] = prev_sigma[~improved]
