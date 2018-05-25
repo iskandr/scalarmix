@@ -18,6 +18,9 @@ from serializable import Serializable
 
 
 class BivariateGaussian(Serializable):
+    """
+    Fits one bivariate Gaussian mixture per row of data
+    """
 
     def __init__(
             self,
@@ -35,25 +38,44 @@ class BivariateGaussian(Serializable):
         l2 *= (1.0 - weights)[:, np.newaxis]
         return l1 / (l1 + l2)
 
-    def _m_step(self, X, assignments):
+    def _m_step(self, X, assignments, eps=0.00001):
         n_rows, n_cols = X.shape
         assert assignments.shape == (n_rows, n_cols)
-        mu = np.zeros((n_rows, 2), dtype="float64")
-        mu[:, 0] = (X * assignments).mean(axis=1)
-        mu[:, 1] = (X * (1.0 - assignments)).mean(axis=1)
-        sigma = np.zeros((n_rows, 2), dtype="float64")
-        sigma[:, 0] = ((X - mu[:, 0][:, np.newaxis]) ** 2 * assignments).mean()
-        sigma[:, 1] = ((X - mu[:, 1][:, np.newaxis]) ** 2 * (1.0 - assignments)).mean()
-        weights = assignments.mean(axis=1)
+        a1 = assignments
+        a2 = 1.0 - assignments
+
+        assert (a1 >= 0).all()
+        assert (a1 <= 1).all()
+
+        mu = np.column_stack([
+            (X * a1).sum(axis=1) / a1.sum(axis=1),
+            (X * a2).sum(axis=1) / a2.sum(axis=1)
+        ])
+        assert mu.shape == (n_rows, 2), "Got mu.shape=%s but expected (%d, 2)" % (mu.shape, n_rows)
+
+        diff1 = X - mu[:, 0][:, np.newaxis]
+        diff1_squared = diff1 ** 2
+
+        diff2 = X - mu[:, 1][:, np.newaxis]
+        diff2_squared = diff2 ** 2
+
+        sigma = eps + np.column_stack([
+            (diff1_squared * a1).sum(axis=1) / a1.sum(axis=1),
+            (diff2_squared * a2).sum(axis=1) / a2.sum(axis=1)
+        ])
+        assert sigma.shape == (n_rows, 2)
+        assert (sigma > 0).all(), "Found %d/%d sigma values<=0" % (
+            (sigma <= 0).sum(),
+            sigma.shape[0] * sigma.shape[1])
+
+        weights = a1.mean(axis=1)
+        assert weights.shape == (n_rows,)
         assert (weights >= 0).all(), "Found %d/%d weights<0" % (
             (weights < 0).sum(),
             len(weights))
         assert (weights <= 1).all(), "Found %d/%d weights>1" % (
             (weights > 1).sum(),
             len(weights))
-        assert (sigma > 0).all(), "Found %d/%d sigma values<=0" % (
-            (sigma <= 0).sum(),
-            sigma.shape[0] * sigma.shape[1])
         return mu, sigma, weights
 
     def single_gaussian_likelihood(self, X, mu, sigma):
@@ -75,6 +97,7 @@ class BivariateGaussian(Serializable):
         assert mu.shape == (n_rows, 2), mu.shape
         assert sigma.shape == (n_rows, 2), sigma.shape
         assert weights.shape == (n_rows,), weights.shape
+        assert (sigma > 0).all()
         m1, m2 = mu[:, 0], mu[:, 1]
         s1, s2 = sigma[:, 0], sigma[:, 1]
         w1, w2 = weights, 1.0 - weights
@@ -82,30 +105,40 @@ class BivariateGaussian(Serializable):
         l2 = self.single_gaussian_likelihood(X, m2, s2)
         return w1[:, np.newaxis] * l1 + w2[:, np.newaxis] * l2
 
-    def fit(self, X):
+    def initialize(self, X):
+        m1 = np.percentile(X, q=5.0, axis=1)
+        m2 = np.percentile(X, q=95.0, axis=1)
+        mu = np.column_stack([m1, m2])
+        sigma = np.zeros_like(mu)
+        for i in range(len(X)):
+            row = X[i, :]
+            median = np.median(row)
+            sigma[i, 0] = np.std(row[row < median])
+            sigma[i, 1] = np.std(row[row >= median])
+        weights = np.ones(len(X)) * 0.5
+        return mu, sigma, weights
+
+    def fit(self, X, min_improvement=10.0 ** -6, verbose=True):
         n_rows, n_cols = X.shape
-        random_assignment = np.random.rand(n_rows, n_cols)
-        mu, sigma, weights = self._m_step(
-            X,
-            random_assignment)
+        mu, sigma, weights = self.initialize(X)
         best_likelihoods = 10 ** 20 * np.ones(n_rows, dtype="float64")
         for iter_number in range(self.max_iters):
             assignments = self._e_step(X, mu, sigma, weights)
             prev_mu, prev_sigma, prev_weights = mu, sigma, weights
             mu, sigma, weights = self._m_step(X, assignments)
             per_sample_likelihood = self.likelihood(X, mu, sigma, weights)
-            sum_log_likelihoods = (-np.log(per_sample_likelihood)).sum(axis=1)
-            improved = (best_likelihoods - sum_log_likelihoods) > 0.000001
-            best_likelihoods[improved] = sum_log_likelihoods[improved]
+            mean_log_likelihoods = (-np.log(per_sample_likelihood)).mean(axis=1)
+            improved = (best_likelihoods - mean_log_likelihoods) > min_improvement
+            best_likelihoods[improved] = mean_log_likelihoods[improved]
             mu[~improved] = prev_mu[~improved]
             sigma[~improved] = prev_sigma[~improved]
             weights[~improved] = prev_weights[~improved]
-
-            print(
-                "-- Epoch %d: log likelihood mean=%f (%d improved)" % (
-                    iter_number + 1,
-                    sum_log_likelihoods.mean(),
-                    improved.sum()))
+            if verbose:
+                print(
+                    "-- Epoch %d: log likelihood mean=%f (%d improved)" % (
+                        iter_number + 1,
+                        mean_log_likelihoods.mean(),
+                        improved.sum()))
 
             if not improved.any():
                 break
