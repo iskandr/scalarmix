@@ -44,8 +44,8 @@ class BivariateGaussian(Serializable):
         a1 = assignments
         a2 = 1.0 - assignments
 
-        assert (a1 >= 0).all()
-        assert (a1 <= 1).all()
+        assert (a1 >= 0).all(), a1
+        assert (a1 <= 1).all(), a1
 
         mu = np.column_stack([
             (X * a1).sum(axis=1) / a1.sum(axis=1),
@@ -124,6 +124,7 @@ class BivariateGaussian(Serializable):
         best_likelihoods = 10 ** 20 * np.ones(n_rows, dtype="float64")
         for iter_number in range(self.max_iters):
             assignments = self._e_step(X, mu, sigma, weights)
+            assert not np.isnan(assignments).any()
             prev_mu, prev_sigma, prev_weights = mu, sigma, weights
             mu, sigma, weights = self._m_step(X, assignments)
             per_sample_likelihood = self.likelihood(X, mu, sigma, weights)
