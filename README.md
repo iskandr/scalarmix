@@ -1,3 +1,3 @@
-# Scalar bivariate Gaussian mixture models
+# Scalar bimodal Gaussian mixture models
 
 
