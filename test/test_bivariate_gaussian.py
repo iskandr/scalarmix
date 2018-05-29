@@ -39,8 +39,8 @@ def test_simple():
     m.fit(samples)
 
     # Attempt to get identifiability by comparing min and max of the two component means.
-    assert_almost_equal(m.mu_.min(1), means.min(1), decimal=1)
-    assert_almost_equal(m.mu_.max(1), means.max(1), decimal=1)
+    assert_almost_equal(m.mean_.min(1), means.min(1), decimal=1)
+    assert_almost_equal(m.mean_.max(1), means.max(1), decimal=1)
     # Todo: we should check stds and assignments (weights) too.
 
 
@@ -52,8 +52,10 @@ def test_larger_means():
     stds = np.random.uniform(1, 2, num_rows * 2).reshape((-1, 2))
 
     means *= 1e6
+    stds *= 1e3
     print("!!!")
-    print(means)
+    print(means[:2])
+    print(stds[:2])
     print("!!!")
     assignments = np.random.randint(0, 2, (len(means), num_points))
     samples = np.array([
@@ -71,5 +73,5 @@ def test_larger_means():
     m.fit(samples)
 
     # Attempt to get identifiability by comparing min and max of the two component means.
-    assert_almost_equal(m.mu_.min(1), means.min(1), decimal=1)
-    assert_almost_equal(m.mu_.max(1), means.max(1), decimal=1)
+    assert_almost_equal(m.mean_.min(1), means.min(1), decimal=1)
+    assert_almost_equal(m.mean__.max(1), means.max(1), decimal=1)
