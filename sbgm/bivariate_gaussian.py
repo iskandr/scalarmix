@@ -24,21 +24,45 @@ class BivariateGaussian(Serializable):
 
     def __init__(
             self,
-            max_iters=200):
+            max_iters=200,
+            assignment_smoothing=10.0 ** -10,
+            std_smoothing=10.0 ** -10,
+            mean_bias=0.0,
+            min_percent_improvement=10.0 ** -5):
         self.max_iters = max_iters
+        self.assignment_smoothing = assignment_smoothing
+        self.std_smoothing = std_smoothing
+        self.mean_bias = mean_bias
+        self.min_percent_improvement = min_percent_improvement
 
         self.mu_ = None
         self.sigma_ = None
         self.weights_ = None
 
     def _e_step(self, X, mu, sigma, weights):
-        l1 = self.single_gaussian_likelihood(X, mu[:, 0], sigma[:, 0])
+        l1 = self.single_gaussian_densities(X, mu[:, 0], sigma[:, 0])
+        assert not np.isnan(l1).any()
+        assert np.isfinite(l1).all()
+
         l1 *= weights[:, np.newaxis]
-        l2 = self.single_gaussian_likelihood(X, mu[:, 1], sigma[:, 1])
+        assert not np.isnan(l1).any()
+        assert np.isfinite(l1).all()
+
+        l1 += self.assignment_smoothing
+
+        l2 = self.single_gaussian_densities(X, mu[:, 1], sigma[:, 1])
+        assert not np.isnan(l2).any()
+        assert np.isfinite(l2).all()
+
         l2 *= (1.0 - weights)[:, np.newaxis]
+        assert not np.isnan(l2).any()
+        assert np.isfinite(l2).all()
+
+        l2 += self.assignment_smoothing
+
         return l1 / (l1 + l2)
 
-    def _m_step(self, X, assignments, eps=0.00001):
+    def _m_step(self, X, assignments):
         n_rows, n_cols = X.shape
         assert assignments.shape == (n_rows, n_cols)
         a1 = assignments
@@ -47,7 +71,7 @@ class BivariateGaussian(Serializable):
         assert (a1 >= 0).all(), a1
         assert (a1 <= 1).all(), a1
 
-        mu = np.column_stack([
+        mu = self.mean_bias + np.column_stack([
             (X * a1).sum(axis=1) / a1.sum(axis=1),
             (X * a2).sum(axis=1) / a2.sum(axis=1)
         ])
@@ -59,7 +83,7 @@ class BivariateGaussian(Serializable):
         diff2 = X - mu[:, 1][:, np.newaxis]
         diff2_squared = diff2 ** 2
 
-        sigma = eps + np.column_stack([
+        sigma = self.std_smoothing + np.column_stack([
             (diff1_squared * a1).sum(axis=1) / a1.sum(axis=1),
             (diff2_squared * a2).sum(axis=1) / a2.sum(axis=1)
         ])
@@ -78,15 +102,30 @@ class BivariateGaussian(Serializable):
             len(weights))
         return mu, sigma, weights
 
-    def single_gaussian_likelihood(self, X, mu, sigma):
+    def single_gaussian_densities_explicit(self, X, mu, sigma):
         n_rows, n_cols = X.shape
         assert mu.shape == (n_rows,)
         assert sigma.shape == (n_rows,)
         diff_squared = (X - mu[:, np.newaxis]) ** 2
-        normalizer = 1.0 / np.sqrt(2 * np.pi * sigma)
-        z_scores = diff_squared / sigma[:, np.newaxis]
+        sigma_squard = sigma ** 2
+        normalizer = 1.0 / np.sqrt(2 * np.pi * sigma_squard)
+        z_scores = diff_squared / sigma_squard[:, np.newaxis]
         unnormalized_likelihoods = np.exp(-0.5 * z_scores)
         return normalizer[:, np.newaxis] * unnormalized_likelihoods
+
+    def single_gaussian_densities(self, X, mu, sigma):
+        return np.exp(
+            self.single_gaussian_log_densities(X, mu, sigma))
+
+    def single_gaussian_log_densities(self, X, mu, sigma):
+        n_rows, n_cols = X.shape
+        assert mu.shape == (n_rows,)
+        assert sigma.shape == (n_rows,)
+        diff_squared = (X - mu[:, np.newaxis]) ** 2
+        sigma_squard = sigma ** 2
+        normalizer = 1.0 / np.sqrt(2 * np.pi * sigma_squard)
+        z_scores = diff_squared / sigma_squard[:, np.newaxis]
+        return -0.5 * z_scores + np.log(normalizer)[:, np.newaxis]
 
     def likelihood(self, X, mu, sigma, weights):
         """
@@ -101,35 +140,43 @@ class BivariateGaussian(Serializable):
         m1, m2 = mu[:, 0], mu[:, 1]
         s1, s2 = sigma[:, 0], sigma[:, 1]
         w1, w2 = weights, 1.0 - weights
-        l1 = self.single_gaussian_likelihood(X, m1, s1)
-        l2 = self.single_gaussian_likelihood(X, m2, s2)
-        return w1[:, np.newaxis] * l1 + w2[:, np.newaxis] * l2
+        return (
+            w1[:, np.newaxis] * self.single_gaussian_densities(X, m1, s1) +
+            w2[:, np.newaxis] * self.single_gaussian_densities(X, m2, s2))
 
     def initialize(self, X):
-        m1 = np.percentile(X, q=5.0, axis=1)
-        m2 = np.percentile(X, q=95.0, axis=1)
-        mu = np.column_stack([m1, m2])
-        sigma = np.zeros_like(mu)
+        mu = np.ones((len(X), 2))
+        sigma = np.ones_like(mu) * self.std_smoothing
         for i in range(len(X)):
             row = X[i, :]
             median = np.median(row)
+            mu[i, 0] = np.mean(row[row < median])
+            mu[i, 1] = np.mean(row[row >= median])
             sigma[i, 0] = np.std(row[row < median])
             sigma[i, 1] = np.std(row[row >= median])
         weights = np.ones(len(X)) * 0.5
         return mu, sigma, weights
 
-    def fit(self, X, min_improvement=10.0 ** -6, verbose=True):
+    def fit(self, X, verbose=True):
         n_rows, n_cols = X.shape
         mu, sigma, weights = self.initialize(X)
-        best_likelihoods = 10 ** 20 * np.ones(n_rows, dtype="float64")
+
+        best_likelihoods = 10 ** 30 * np.ones(n_rows, dtype="float64")
+
+        min_improvement = self.min_percent_improvement
+
         for iter_number in range(self.max_iters):
             assignments = self._e_step(X, mu, sigma, weights)
+            print(np.around(mu, decimals=2))
             assert not np.isnan(assignments).any()
             prev_mu, prev_sigma, prev_weights = mu, sigma, weights
             mu, sigma, weights = self._m_step(X, assignments)
             per_sample_likelihood = self.likelihood(X, mu, sigma, weights)
             mean_log_likelihoods = (-np.log(per_sample_likelihood)).mean(axis=1)
-            improved = (best_likelihoods - mean_log_likelihoods) > min_improvement
+            improvement = (best_likelihoods - mean_log_likelihoods)
+            improvement_percent = improvement / best_likelihoods
+            print("Improvement percent: %s" % (improvement_percent * 100))
+            improved = improvement_percent > min_improvement
             best_likelihoods[improved] = mean_log_likelihoods[improved]
             mu[~improved] = prev_mu[~improved]
             sigma[~improved] = prev_sigma[~improved]
