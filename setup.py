@@ -18,8 +18,8 @@ import re
 
 from setuptools import setup, find_packages
 
-project_name = "sbgm"
-description = "Scalar bivariate Gaussian mixture models"
+project_name = "scalarmix"
+description = "Scalar bimodal Gaussian mixture models"
 author = "Alex Rubinsteyn"
 author_email = "alex@openvax.org"
 
@@ -83,6 +83,7 @@ if __name__ == '__main__':
             "six>=1.9.0",
             "numpy",
         ],
-        long_description=readme_restructured,
+        long_description=readme_markdown,
+        long_description_content_type="text/markdown",
         packages=find_packages(),
     )

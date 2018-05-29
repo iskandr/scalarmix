@@ -130,17 +130,6 @@ class BivariateGaussian(Serializable):
                 len(weights))
         return mean, variance, weights
 
-    def single_gaussian_densities_explicit(self, X, mean, variance):
-        n_rows, n_cols = X.shape
-        assert mean.shape == (n_rows,)
-        assert variance.shape == (n_rows,)
-        diff = (X - mean[:, np.newaxis])
-        diff *= diff
-        z_score = diff / variance[:, np.newaxis]
-        normalizer = np.sqrt(2 * np.pi * variance)
-        unnormalized_likelihoods = np.exp(-0.5 * z_score)
-        return unnormalized_likelihoods / normalizer[:, np.newaxis]
-
     def _check_gaussian_params(self, mean, variance, cluster_weights):
         if self.numeric_error_checking:
             n_rows = mean.shape[0]
@@ -167,7 +156,12 @@ class BivariateGaussian(Serializable):
         log_normalizer = np.log(normalizer)
         return -0.5 * z_score + log_normalizer
 
-    def mixture_densities(self, X, mean=None, variance=None, cluster_weights=None):
+    def mixture_densities(
+            self,
+            X,
+            mean=None,
+            variance=None,
+            cluster_weights=None):
         """
         Returns Gaussian density of each observation under the
         mean, std, and mixture coefficients for each row.
@@ -188,9 +182,19 @@ class BivariateGaussian(Serializable):
         m1, m2 = mean[:, 0], mean[:, 1]
         s1, s2 = variance[:, 0], variance[:, 1]
         w1, w2 = cluster_weights, 1.0 - cluster_weights
-        return (
-            w1[:, np.newaxis] * self.single_gaussian_densities(X, m1, s1) +
-            w2[:, np.newaxis] * self.single_gaussian_densities(X, m2, s2))
+
+        ###
+        # Instead of doing w_i * prob(X | m_i, s_i), which involves very small
+        # numbers, often beyond the range of floating point,
+        # we'll instead take the log of each term initially and then
+        # add them exponentiated.
+        ###
+        log_d1 = self.single_gaussian_log_densities(X, m1, s1)
+        log_d1 += np.log(w1)[:, np.newaxis]
+
+        log_d2 = self.single_gaussian_log_densities(X, m2, s2)
+        log_d2 += np.log(w2)[:, np.newaxis]
+        return np.exp(log_d1) + np.exp(log_d2)
 
     def log_mixture_densities(self, X, mean=None, variance=None, cluster_weights=None):
         return np.log(self.mixture_densities(
@@ -257,6 +261,7 @@ class BivariateGaussian(Serializable):
                 cluster_weights=cluster_weights)
             new_mean, new_variance, new_cluster_weights = \
                 self._m_step(X, assignments)
+            # print(new_mean[0])
             per_row_normalized_neg_log_likelihood = \
                 self.normalized_negative_log_likelihood(
                     X,
