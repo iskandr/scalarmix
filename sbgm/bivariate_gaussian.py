@@ -106,12 +106,13 @@ class BivariateGaussian(Serializable):
         n_rows, n_cols = X.shape
         assert mu.shape == (n_rows,)
         assert sigma.shape == (n_rows,)
-        diff_squared = (X - mu[:, np.newaxis]) ** 2
-        sigma_squard = sigma ** 2
-        normalizer = 1.0 / np.sqrt(2 * np.pi * sigma_squard)
-        z_scores = diff_squared / sigma_squard[:, np.newaxis]
-        unnormalized_likelihoods = np.exp(-0.5 * z_scores)
-        return normalizer[:, np.newaxis] * unnormalized_likelihoods
+        diff = (X - mu[:, np.newaxis])
+        z_score = diff / sigma[:, np.newaxis]
+        z_score_squared = z_score ** 2
+        sigma_squared = sigma[:, np.newaxis] ** 2
+        normalizer = np.sqrt(2 * np.pi * sigma_squared)
+        unnormalized_likelihoods = np.exp(-0.5 * z_score_squared)
+        return unnormalized_likelihoods / normalizer
 
     def single_gaussian_densities(self, X, mu, sigma):
         return np.exp(
@@ -121,11 +122,13 @@ class BivariateGaussian(Serializable):
         n_rows, n_cols = X.shape
         assert mu.shape == (n_rows,)
         assert sigma.shape == (n_rows,)
-        diff_squared = (X - mu[:, np.newaxis]) ** 2
-        sigma_squard = sigma ** 2
-        normalizer = 1.0 / np.sqrt(2 * np.pi * sigma_squard)
-        z_scores = diff_squared / sigma_squard[:, np.newaxis]
-        return -0.5 * z_scores + np.log(normalizer)[:, np.newaxis]
+        diff = (X - mu[:, np.newaxis])
+        z_score = diff / sigma[:, np.newaxis]
+        z_score_squared = z_score ** 2
+
+        normalizer = np.sqrt(2 * np.pi * sigma[:, np.newaxis] ** 2)
+        log_normalizer = np.log(normalizer)
+        return -0.5 * z_score_squared + log_normalizer
 
     def likelihood(self, X, mu, sigma, weights):
         """
