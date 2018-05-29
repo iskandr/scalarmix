@@ -81,6 +81,7 @@ if __name__ == '__main__':
         ],
         install_requires=[
             "six>=1.9.0",
+            "numpy",
         ],
         long_description=readme_restructured,
         packages=find_packages(),
